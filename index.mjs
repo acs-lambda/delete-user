@@ -95,7 +95,7 @@ export const handler = async (event) => {
     // 2) Delete from Cognito using email
     await cognitoClient.send(new AdminDeleteUserCommand({
       UserPoolId: USER_POOL_ID,
-      Username: userEmail,
+      Username: targetId,
     }));
 
     // 3) Query and delete all Conversations where associated_account = targetId
