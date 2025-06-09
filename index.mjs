@@ -118,6 +118,8 @@ export const handler = async (event) => {
       },
     }));
 
+    console.log('Found conversations:', JSON.stringify(convItems, null, 2));
+
     // 4) Query and delete all Threads where associated_account = targetId
     const { Items: threadItems = [] } = await dynamoDb.send(new QueryCommand({
       TableName: THREADS_TABLE,
@@ -128,34 +130,41 @@ export const handler = async (event) => {
       },
     }));
 
+    console.log('Found threads:', JSON.stringify(threadItems, null, 2));
+
     // 5) Delete all conversations and threads in parallel
     const deletePromises = [
       // Delete conversations
-      ...convItems.map(item =>
-        dynamoDb.send(new DeleteItemCommand({
+      ...convItems.filter(item => item && item.conversation_id).map(item => {
+        console.log('Deleting conversation:', item.conversation_id.S);
+        return dynamoDb.send(new DeleteItemCommand({
           TableName: CONVERSATIONS_TABLE,
           Key: {
-            conversation_id: { S: item.conversation_id.S },
-            created_at: { S: item.created_at.S }
+            conversation_id: item.conversation_id,
           },
-        }))
-      ),
+        }));
+      }),
       // Delete threads
-      ...threadItems.map(item =>
-        dynamoDb.send(new DeleteItemCommand({
+      ...threadItems.filter(item => item && item.conversation_id).map(item => {
+        console.log('Deleting thread:', item.conversation_id.S);
+        return dynamoDb.send(new DeleteItemCommand({
           TableName: THREADS_TABLE,
           Key: {
-            thread_id: { S: item.thread_id.S },
-            created_at: { S: item.created_at.S }
+            conversation_id: item.conversation_id
           },
-        }))
-      )
+        }));
+      })
     ];
 
     // 6) Wait for all deletions to complete
-    await Promise.all(deletePromises);
+    if (deletePromises.length > 0) {
+      await Promise.all(deletePromises);
+    } else {
+      console.log('No conversations or threads found to delete');
+    }
 
     // 7) Finally delete the user record
+    console.log('Deleting user record:', targetId);
     await dynamoDb.send(new DeleteItemCommand({
       TableName: USERS_TABLE,
       Key: {
@@ -177,6 +186,7 @@ export const handler = async (event) => {
     };
   } catch (err) {
     console.error("Deletion error:", err);
+    console.error("Error stack:", err.stack);
     
     // Handle specific error cases
     if (err.name === "UserNotFoundException") {
@@ -201,13 +211,28 @@ export const handler = async (event) => {
       };
     }
 
+    // Handle TypeError specifically
+    if (err.name === "TypeError") {
+      return {
+        statusCode: 500,
+        headers: cors,
+        body: JSON.stringify({ 
+          message: "Error processing database records",
+          error: err.name,
+          details: err.message,
+          stack: err.stack
+        }),
+      };
+    }
+
     return {
       statusCode: 500,
       headers: cors,
       body: JSON.stringify({ 
         message: "Internal server error during user deletion",
         error: err.name,
-        details: err.message
+        details: err.message,
+        stack: err.stack
       }),
     };
   }
