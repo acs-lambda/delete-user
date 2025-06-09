@@ -112,7 +112,7 @@ export const handler = async (event) => {
     const { Items: threadItems = [] } = await dynamoDb.send(new QueryCommand({
       TableName: THREADS_TABLE,
       IndexName: THREADS_ASSOCIATED_INDEX,
-      KeyConditionExpression: "associated_accounts = :id",
+      KeyConditionExpression: "associated_account = :id",
       ExpressionAttributeValues: {
         ":id": { S: targetId },
       },
