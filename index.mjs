@@ -123,8 +123,7 @@ export const handler = async (event) => {
       dynamoDb.send(new DeleteItemCommand({
         TableName: CONVERSATIONS_TABLE,
         Key: {
-          conversation_id: { S: item.conversation_id.S },
-          response_id: { S: item.responseId.S },
+          conversation_id: { S: item.conversation_id },
         },
       }))
     );
@@ -134,8 +133,7 @@ export const handler = async (event) => {
       dynamoDb.send(new DeleteItemCommand({
         TableName: THREADS_TABLE,
         Key: {
-          thread_id: { S: item.thread_id.S },
-          message_id: { S: item.message_id.S },
+          conversation_id: { S: item.conversation_id },
         },
       }))
     );
