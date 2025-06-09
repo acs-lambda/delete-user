@@ -137,12 +137,13 @@ export const handler = async (event) => {
     // 5) Delete all conversations and threads in parallel
     const deletePromises = [
       // Delete conversations
-      ...convItems.filter(item => item && item.conversation_id).map(item => {
-        console.log('Deleting conversation:', item.conversation_id);
+      ...convItems.filter(item => item && item.conversation_id && item.response_id).map(item => {
+        console.log('Deleting conversation:', item.conversation_id, item.response_id);
         return dynamoDb.send(new DeleteCommand({
           TableName: CONVERSATIONS_TABLE,
           Key: {
-            conversation_id: item.conversation_id
+            conversation_id: item.conversation_id,
+            response_id: item.response_id
           },
         }));
       }),
