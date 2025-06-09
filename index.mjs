@@ -140,7 +140,7 @@ export const handler = async (event) => {
         return dynamoDb.send(new DeleteItemCommand({
           TableName: CONVERSATIONS_TABLE,
           Key: {
-            conversation_id: item.conversation_id,
+            conversation_id: { S: item.conversation_id.S }
           },
         }));
       }),
@@ -150,7 +150,7 @@ export const handler = async (event) => {
         return dynamoDb.send(new DeleteItemCommand({
           TableName: THREADS_TABLE,
           Key: {
-            conversation_id: item.conversation_id
+            conversation_id: { S: item.conversation_id.S }
           },
         }));
       })
@@ -158,7 +158,9 @@ export const handler = async (event) => {
 
     // 6) Wait for all deletions to complete
     if (deletePromises.length > 0) {
+      console.log(`Attempting to delete ${deletePromises.length} items...`);
       await Promise.all(deletePromises);
+      console.log('All items deleted successfully');
     } else {
       console.log('No conversations or threads found to delete');
     }
@@ -187,6 +189,7 @@ export const handler = async (event) => {
   } catch (err) {
     console.error("Deletion error:", err);
     console.error("Error stack:", err.stack);
+    console.error("Error metadata:", JSON.stringify(err.$metadata, null, 2));
     
     // Handle specific error cases
     if (err.name === "UserNotFoundException") {
@@ -211,16 +214,16 @@ export const handler = async (event) => {
       };
     }
 
-    // Handle TypeError specifically
-    if (err.name === "TypeError") {
+    // Handle ValidationException specifically
+    if (err.name === "ValidationException") {
       return {
-        statusCode: 500,
+        statusCode: 400,
         headers: cors,
         body: JSON.stringify({ 
-          message: "Error processing database records",
+          message: "Invalid table schema or key structure",
           error: err.name,
           details: err.message,
-          stack: err.stack
+          metadata: err.$metadata
         }),
       };
     }
@@ -232,7 +235,8 @@ export const handler = async (event) => {
         message: "Internal server error during user deletion",
         error: err.name,
         details: err.message,
-        stack: err.stack
+        stack: err.stack,
+        metadata: err.$metadata
       }),
     };
   }
