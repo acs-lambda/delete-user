@@ -74,29 +74,39 @@ export const handler = async (event) => {
 
   try {
     // 1) Get user details to get email for Cognito deletion
-    const userResult = await dynamoDb.send(new QueryCommand({
+    const userResult = await dynamoDb.send(new GetItemCommand({
       TableName: USERS_TABLE,
-      IndexName: ID_INDEX,
-      KeyConditionExpression: "id = :id",
-      ExpressionAttributeValues: {
-        ":id": { S: targetId },
-      },
+      Key: {
+        id: { S: targetId }
+      }
     }));
 
-    if (!userResult.Items || userResult.Items.length === 0) {
-      throw new Error("User not found in database");
+    if (!userResult.Item) {
+      return {
+        statusCode: 404,
+        headers: cors,
+        body: JSON.stringify({ message: "User not found in database" })
+      };
     }
 
-    const userEmail = userResult.Items[0].email?.S;
+    const userEmail = userResult.Item.email?.S;
     if (!userEmail) {
       throw new Error("User email not found in user record");
     }
 
     // 2) Delete from Cognito using email
-    await cognitoClient.send(new AdminDeleteUserCommand({
-      UserPoolId: USER_POOL_ID,
-      Username: targetId,
-    }));
+    try {
+      await cognitoClient.send(new AdminDeleteUserCommand({
+        UserPoolId: USER_POOL_ID,
+        Username: targetId, 
+      }));
+    } catch (cognitoErr) {
+      if (cognitoErr.name === "UserNotFoundException") {
+        console.warn(`User ${userEmail} not found in Cognito, continuing with database cleanup`);
+      } else {
+        throw cognitoErr;
+      }
+    }
 
     // 3) Query and delete all Conversations where associated_account = targetId
     const { Items: convItems = [] } = await dynamoDb.send(new QueryCommand({
@@ -108,7 +118,7 @@ export const handler = async (event) => {
       },
     }));
 
-    // 4) Query and delete all Threads where associated_accounts = targetId
+    // 4) Query and delete all Threads where associated_account = targetId
     const { Items: threadItems = [] } = await dynamoDb.send(new QueryCommand({
       TableName: THREADS_TABLE,
       IndexName: THREADS_ASSOCIATED_INDEX,
@@ -118,38 +128,42 @@ export const handler = async (event) => {
       },
     }));
 
-    // 5) Delete all conversations
-    const deleteConversationPromises = convItems.map(item =>
-      dynamoDb.send(new DeleteItemCommand({
-        TableName: CONVERSATIONS_TABLE,
-        Key: {
-          conversation_id: { S: item.conversation_id },
-        },
-      }))
-    );
+    // 5) Delete all conversations and threads in parallel
+    const deletePromises = [
+      // Delete conversations
+      ...convItems.map(item =>
+        dynamoDb.send(new DeleteItemCommand({
+          TableName: CONVERSATIONS_TABLE,
+          Key: {
+            conversation_id: { S: item.conversation_id.S },
+            created_at: { S: item.created_at.S }
+          },
+        }))
+      ),
+      // Delete threads
+      ...threadItems.map(item =>
+        dynamoDb.send(new DeleteItemCommand({
+          TableName: THREADS_TABLE,
+          Key: {
+            thread_id: { S: item.thread_id.S },
+            created_at: { S: item.created_at.S }
+          },
+        }))
+      )
+    ];
 
-    // 6) Delete all threads
-    const deleteThreadPromises = threadItems.map(item =>
-      dynamoDb.send(new DeleteItemCommand({
-        TableName: THREADS_TABLE,
-        Key: {
-          conversation_id: { S: item.conversation_id },
-        },
-      }))
-    );
+    // 6) Wait for all deletions to complete
+    await Promise.all(deletePromises);
 
-    // 7) Wait for all deletions to complete
-    await Promise.all([...deleteConversationPromises, ...deleteThreadPromises]);
-
-    // 8) Finally delete the user record using the ID
+    // 7) Finally delete the user record
     await dynamoDb.send(new DeleteItemCommand({
       TableName: USERS_TABLE,
       Key: {
-        id: { S: targetId },
+        id: { S: targetId }
       },
     }));
 
-    // 9) Success response
+    // 8) Success response
     return {
       statusCode: 200,
       headers: cors,
@@ -163,13 +177,37 @@ export const handler = async (event) => {
     };
   } catch (err) {
     console.error("Deletion error:", err);
-    const isNotFound = err.name === "UserNotFoundException";
+    
+    // Handle specific error cases
+    if (err.name === "UserNotFoundException") {
+      return {
+        statusCode: 404,
+        headers: cors,
+        body: JSON.stringify({ 
+          message: "User not found in Cognito",
+          error: err.name
+        }),
+      };
+    }
+    
+    if (err.name === "ResourceNotFoundException") {
+      return {
+        statusCode: 404,
+        headers: cors,
+        body: JSON.stringify({ 
+          message: "Resource not found",
+          error: err.name
+        }),
+      };
+    }
+
     return {
-      statusCode: isNotFound ? 404 : 500,
+      statusCode: 500,
       headers: cors,
       body: JSON.stringify({ 
-        message: err.message,
-        error: err.name
+        message: "Internal server error during user deletion",
+        error: err.name,
+        details: err.message
       }),
     };
   }
